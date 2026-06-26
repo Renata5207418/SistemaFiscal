@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "apexcharts": "^5.10.3",
+    "axios": "^1.13.5",
+    "lucide-react": "^0.575.0",
+    "react-apexcharts": "^2.1.0",
+    "react-router-dom": "^7.13.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "^4.3.1"
+  }
+}
