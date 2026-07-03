@@ -11,7 +11,7 @@ class DominioRepository:
             "port": int(os.getenv("DOMINIO_PORT", 2638)),
             "dbname": os.getenv("DOMINIO_DB"),
             "user": os.getenv("DOMINIO_USER"),
-            "password": os.getenv("DOMINIO_PASS")
+            "password": os.getenv("DOMINIO_PASSWORD")
         }
 
     def get_faturamento_mensal(self, inicio: str, fim: str):

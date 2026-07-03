@@ -4,12 +4,11 @@ import logging
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-
 import zipfile
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks, status as http_status
-from fastapi.responses import StreamingResponse
-
+from fastapi import APIRouter, HTTPException, Depends, Query, status as http_status
+from fastapi.responses import StreamingResponse, JSONResponse
+from utils.json_safe import safe_json
 from automacao.config import STORAGE_INDIVIDUAL
 from automacao.runner import processar_empresa_mes, reprocessar_faturamento_mensal
 from database.database import (
@@ -119,7 +118,29 @@ def agendar_tarefa(
 
 @router.get("/status")
 def get_status():
-    cursor = tasks_col.find({"tipo": {"$ne": "declaracao_pgdas"}}).sort("created_at", -1)
+    projection = {
+        "_id": 1,
+        "cliente_cod": 1,
+        "empresa": 1,
+        "cnpj": 1,
+        "mesano": 1,
+        "status": 1,
+        "username": 1,
+        "tipo": 1,
+        "created_at": 1,
+        "error_msg": 1,
+    }
+
+    cursor = (
+        tasks_col
+        .find(
+            {"tipo": {"$ne": "declaracao_pgdas"}},
+            projection
+        )
+        .sort("created_at", -1)
+        .limit(1000)
+    )
+
     tasks = []
     vistos = set()
 
@@ -134,8 +155,13 @@ def get_status():
         vistos.add(chave)
 
         created = t.get("created_at") or datetime.now(timezone.utc)
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
+
+        if isinstance(created, datetime):
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            created_str = created.isoformat()
+        else:
+            created_str = str(created)
 
         tasks.append({
             "job_id": str(t.get("_id", "")),
@@ -146,52 +172,36 @@ def get_status():
             "status": t.get("status", ""),
             "username": t.get("username", ""),
             "tipo": t.get("tipo", ""),
-            "created_at": created.isoformat(),
-            "error_msg": t.get("error_msg", "")
+            "created_at": created_str,
+            "error_msg": str(t.get("error_msg") or "")
         })
 
-    return {"tasks": tasks}
-
-
-def bg_buscar_xml_aws(task_id: str, cod_cliente: int, mesano: str):
-    try:
-        fat_tasks.update_one(
-            {"_id": ObjectId(task_id)},
-            {"$set": {"status": "em_andamento", "updated_at": datetime.now(timezone.utc)}}
-        )
-
-        reprocessar_faturamento_mensal(cod_cliente, mesano)
-
-        fat_tasks.update_one(
-            {"_id": ObjectId(task_id)},
-            {"$set": {
-                "status": "concluído",
-                "updated_at": datetime.now(timezone.utc),
-                "finished_at": datetime.now(timezone.utc)
-            }}
-        )
-
-    except Exception as e:
-        fat_tasks.update_one(
-            {"_id": ObjectId(task_id)},
-            {"$set": {
-                "status": "erro",
-                "error_msg": str(e),
-                "updated_at": datetime.now(timezone.utc)
-            }}
-        )
+    return JSONResponse(content=safe_json({"tasks": tasks}))
 
 
 @router.post("/agenda-xml/{cod}", status_code=http_status.HTTP_201_CREATED)
 def agendar_faturamento_xml(
         cod: int,
         payload: XmlTaskCreate,
-        background_tasks: BackgroundTasks,
         user=Depends(get_current_user)
 ):
     cliente = colecao.find_one({"_id": cod, "ativo": True})
     if not cliente:
         raise HTTPException(404, f"Cliente {cod} não encontrado.")
+
+    existente = fat_tasks.find_one({
+        "cliente_cod": cod,
+        "mesano": payload.mesano,
+        "tipo": "xml",
+        "status": {"$in": ["pendente", "em_andamento"]}
+    })
+
+    if existente:
+        return {
+            "job_id": str(existente["_id"]),
+            "status": existente.get("status"),
+            "mensagem": "Atualização de faturamento já está na fila."
+        }
 
     now = datetime.now(timezone.utc)
 
@@ -213,9 +223,12 @@ def agendar_faturamento_xml(
     result = fat_tasks.insert_one(task)
     task_id = str(result.inserted_id)
 
-    background_tasks.add_task(bg_buscar_xml_aws, task_id, cod, payload.mesano)
+    return {
+        "job_id": task_id,
+        "status": "pendente",
+        "mensagem": "Atualização de faturamento adicionada à fila. O processamento será feito pelo scheduler."
+    }
 
-    return {"job_id": task_id, "status": "pendente"}
 
 
 @router.get("/status-faturamento")

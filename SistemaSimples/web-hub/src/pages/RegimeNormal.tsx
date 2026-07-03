@@ -508,7 +508,7 @@ export const RegimeNormal: React.FC = () => {
       {/* TABELA DE DADOS */}
       <div className="bg-white rounded-[20px] shadow-sm border border-gray-100 overflow-hidden relative">
         <div className="overflow-x-auto min-h-80">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[1150px] text-sm">
             <thead>
               <tr className="bg-brand-panel/50">
                 <th className="p-3 align-middle bg-brand-panel w-12 text-center border-r border-gray-50">
@@ -1075,12 +1075,12 @@ export const RegimeNormal: React.FC = () => {
                       )}
                     </td>
 
-                    <td className="p-4 align-middle text-center border-r border-gray-50">
-                      <span className={`px-4 py-2 rounded-xl text-[11px] font-black uppercase border transition-all shadow-sm ${
+                    <td className="p-4 align-middle text-center border-r border-gray-50 w-[130px] min-w-[130px]">
+                      <span className={`inline-flex items-center justify-center whitespace-nowrap min-w-[105px] px-3 py-2 rounded-xl text-[11px] font-black uppercase border transition-all shadow-sm ${
                         f.apuracao === 'Sim'
                           ? 'bg-green-50 text-green-700 border-green-200 shadow-green-100/50'
                           : 'bg-red-50 text-red-700 border-red-200 shadow-red-100/50'
-                      } `}>
+                      }`}>
                         {f.apuracao === 'Sim' ? 'Apurado' : 'Não apurado'}
                       </span>
                     </td>

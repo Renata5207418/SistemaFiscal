@@ -112,10 +112,33 @@ export const BuscaXML: React.FC = () => {
   }, []);
 
   const formatDateTime = (iso: string) => {
-    if (!iso) return '—';
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    if (!iso) return '?';
+
+    const texto = String(iso).trim();
+
+    // Se vier no formato ISO sem timezone, assume UTC.
+    // Exemplo: 2026-07-02T18:05:00 -> 2026-07-02T18:05:00Z
+    const temTimezone =
+      texto.endsWith('Z') ||
+      /[+-]\d{2}:\d{2}$/.test(texto);
+
+    const textoNormalizado =
+      texto.includes('T') && !temTimezone
+        ? `${texto}Z`
+        : texto;
+
+    const d = new Date(textoNormalizado);
+
+    if (isNaN(d.getTime())) return texto;
+
+    return d.toLocaleString('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   const getMesPorExtenso = (anoMes: string) => {

@@ -94,6 +94,8 @@ export const SimplesNacional: React.FC = () => {
   const popoverTribNacRef = useRef<HTMLDivElement>(null);
   
   const tableScrollRef = useRef<HTMLDivElement>(null);
+  const isFetchingDataRef = useRef(false);
+  const isFetchingFilaRef = useRef(false);
   // --------------------------------------------------------------
 
   const [isAcompanhamentoOpen, setIsAcompanhamentoOpen] = useState(false);
@@ -187,7 +189,12 @@ export const SimplesNacional: React.FC = () => {
   };
 
   const fetchData = useCallback(async (showLoading = true) => {
+    if (isFetchingDataRef.current) return;
+
+    isFetchingDataRef.current = true;
+
     if (showLoading) setLoading(true);
+
     try {
       const mesFormatado = mesano.replace('-', '');
       const { data } = await api.get(`/automacao/painel-geral-sn?mesano=${mesFormatado}`);
@@ -201,13 +208,17 @@ export const SimplesNacional: React.FC = () => {
             ultima: formatData(f.ultima),
             data_declaracao: f.data_declaracao ? formatData(f.data_declaracao) : null
         }));
+
         setFaturas(faturasFormatadas);
+
         const novosValidados: Record<number, { date: string, user: string }> = {};
+
         data.faturas.forEach((f: any) => {
             if (f.conferencia && f.conferencia.status) {
                 novosValidados[f.cod] = { date: f.conferencia.date, user: f.conferencia.user };
             }
         });
+
         setValidados(novosValidados);
       } else {
         setFaturas([]);
@@ -218,26 +229,42 @@ export const SimplesNacional: React.FC = () => {
       setFaturas([]); 
       setValidados({});
     } finally {
+      isFetchingDataRef.current = false;
       setLoading(false);
     }
   }, [mesano]);
 
   const fetchFilaReal = useCallback(async () => {
+    if (isFetchingFilaRef.current) return;
+
+    isFetchingFilaRef.current = true;
+
     try {
       const { data } = await api.get('/automacao/v2/fila/tarefas?limit=100');
-      if(data.success) setTarefasFila(data.data);
-    } catch (err) {}
+
+      if (data.success) {
+        setTarefasFila(data.data);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar fila:", err);
+    } finally {
+      isFetchingFilaRef.current = false;
+    }
   }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  useEffect(() => {
     fetchFilaReal();
-    const interval = setInterval(fetchFilaReal, 3000);
+
+    const intervaloMs = isAcompanhamentoOpen ? 10000 : 30000;
+
+    const interval = setInterval(fetchFilaReal, intervaloMs);
+
     return () => clearInterval(interval);
-  }, [fetchFilaReal]);
+  }, [fetchFilaReal, isAcompanhamentoOpen]);
+
+    useEffect(() => {
+      fetchData();
+    }, [fetchData]);
 
   const handleSort = (key: keyof Fatura | string) => {
     let direction: 'asc' | 'desc' = 'asc';

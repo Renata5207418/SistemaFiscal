@@ -771,13 +771,37 @@ def main():
         misfire_grace_time=30
     )
 
-    logging.info("Scheduler (Fila Corporativa) iniciado com sucesso. Aguardando tarefas...")
+    logging.info(
+      "[Scheduler START] Scheduler iniciado com sucesso. "
+       f"pid={os.getpid()} "
+       f"python={sys.executable} "
+       f"cwd={os.getcwd()}"
+    )
+
     try:
         scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Scheduler interrompido pelo usuário.")
+
+    except KeyboardInterrupt:
+        logging.warning("[Scheduler STOP] Interrompido manualmente por KeyboardInterrupt.")
+
+    except SystemExit as e:
+        logging.warning(f"[Scheduler STOP] Interrompido por SystemExit: {e}")
+
+    except BaseException as e:
+        logging.exception(f"[Scheduler FATAL] Scheduler parou por erro fatal não tratado: {e}")
+        raise
+
     finally:
-        scheduler.shutdown()
+        logging.warning("[Scheduler FINALLY] Entrou no bloco finally do scheduler.")
+
+        try:
+            if scheduler.running:
+                scheduler.shutdown(wait=False)
+                logging.warning("[Scheduler SHUTDOWN] Shutdown executado com sucesso.")
+            else:
+                logging.warning("[Scheduler SHUTDOWN] Scheduler já não estava running.")
+        except Exception as e:
+            logging.exception(f"[Scheduler SHUTDOWN ERRO] Falha ao executar shutdown: {e}")
 
 if __name__ == "__main__":
     main()

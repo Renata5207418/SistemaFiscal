@@ -6,7 +6,8 @@ from pathlib import Path
 from pydantic import BaseModel 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks, status as http_status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
+from utils.json_safe import safe_json
 from database.database import (
     get_pre_cadastro_collection,
     get_tomadas_collection,
@@ -247,7 +248,6 @@ def agendar_tomadas_individual(
 def agendar_tomadas_xml(
         cod: int,
         payload: XmlTaskCreate,
-        background_tasks: BackgroundTasks,
         user=Depends(get_current_user)
 ):
     cliente = colecao.find_one({"_id": cod, "ativo": True})
@@ -287,18 +287,12 @@ def agendar_tomadas_xml(
     result = tomadas_tasks.insert_one(task)
     task_id = str(result.inserted_id)
 
-    background_tasks.add_task(
-        bg_buscar_xml_tomadas,
-        task_id,
-        cod,
-        payload.mesano,
-        True
-    )
-
     return {
         "job_id": task_id,
-        "status": "pendente"
+        "status": "pendente",
+        "mensagem": "Tarefa de tomadas adicionada à fila. O processamento será feito pelo scheduler."
     }
+
 
 @router.post("/tomadas/agenda-valor", status_code=http_status.HTTP_201_CREATED)
 def agendar_tomadas_valor_lote(
@@ -381,13 +375,13 @@ def status_tomadas(
             "status": t.get("status"),
             "tipo": t.get("tipo"),
             "error_msg": t.get("error_msg"),
-            "resultado": t.get("resultado") or t.get("resultados", {}),
+            "resultado": safe_json(t.get("resultado") or t.get("resultados", {})),
             "created_at": created.isoformat() if isinstance(created, datetime) else created,
             "updated_at": updated.isoformat() if isinstance(updated, datetime) else updated,
             "finished_at": finished.isoformat() if isinstance(finished, datetime) else finished,
         })
 
-    return {"tasks": resp}
+    return JSONResponse(content=safe_json({"tasks": resp}))
 
 
 # --- ROTA NOVA DE TOGGLE DE CONFERÊNCIA ---

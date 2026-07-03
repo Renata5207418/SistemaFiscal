@@ -1,7 +1,11 @@
 import re
 from decimal import Decimal
+from datetime import datetime
+from pathlib import Path
 
+from bson import ObjectId
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 
 from database.database import (
     get_pre_cadastro_collection,
@@ -22,6 +26,51 @@ colecao = get_pre_cadastro_collection()
 coll_fat = get_faturamentos_collection()
 
 
+def limpar_para_json(obj):
+    """
+    Converte objetos que podem quebrar o retorno JSON do FastAPI.
+    Evita problema com datetime, ObjectId, Decimal, set, Path etc.
+    """
+    if obj is None:
+        return None
+
+    if isinstance(obj, ObjectId):
+        return str(obj)
+
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+
+    if isinstance(obj, Decimal):
+        return float(obj)
+
+    if isinstance(obj, Path):
+        return str(obj)
+
+    if isinstance(obj, set):
+        return [limpar_para_json(item) for item in obj]
+
+    if isinstance(obj, tuple):
+        return [limpar_para_json(item) for item in obj]
+
+    if isinstance(obj, list):
+        return [limpar_para_json(item) for item in obj]
+
+    if isinstance(obj, dict):
+        return {
+            str(k): limpar_para_json(v)
+            for k, v in obj.items()
+        }
+
+    return obj
+
+
+def fechar_db_seguro(db):
+    try:
+        db.close()
+    except Exception:
+        pass
+
+
 @router.get("/painel-geral-sn")
 def painel_geral_sn(
         mesano: str = Query(..., pattern=r"^\d{6}$"),
@@ -29,6 +78,12 @@ def painel_geral_sn(
 ):
     tab_service = TabelasService()
     dados_faturamento = tab_service.obter_dados_faturamento(mesano)
+
+    dados_faturamento_map = {
+        item.get("cod_cliente"): item
+        for item in dados_faturamento
+        if item.get("cod_cliente") is not None
+    }
 
     xml_map = {
         d["cod_cliente"]: d
@@ -39,16 +94,20 @@ def painel_geral_sn(
     data_sim = f"{ano}-{mes:02d}-01"
 
     db = DatabaseConnection()
-    db.connect()
-    lista_apurados = db.get_todas_apuracoes_mensal(data_sim)
-    imposto_map = db.get_impostos_apurados_mensal(data_sim)
-    
-    # busca Fator R do banco
-    fator_r_raw = db.get_fator_r_dados(ano, mes)
-    db.close()
 
-    # Criando um dicionário para busca rápida do percentual pelo código do cliente
+    try:
+        db.connect()
+
+        lista_apurados = db.get_todas_apuracoes_mensal(data_sim)
+        imposto_map = db.get_impostos_apurados_mensal(data_sim)
+
+        fator_r_raw = db.get_fator_r_dados(ano, mes)
+
+    finally:
+        fechar_db_seguro(db)
+
     mapa_fator_r = {}
+
     if fator_r_raw:
         for row in fator_r_raw:
             cod_emp = row[0]
@@ -74,6 +133,7 @@ def painel_geral_sn(
     )
 
     col_certs = get_certificados_collection()
+
     mapa_certs = {
         doc["_id"]: doc
         for doc in col_certs.find({})
@@ -88,10 +148,7 @@ def painel_geral_sn(
         dec_doc = dec_map.get(cod, {})
         guia_doc = guias_map.get(cod, {})
 
-        fat_dom_doc = next(
-            (item for item in dados_faturamento if item.get("cod_cliente") == cod),
-            {}
-        )
+        fat_dom_doc = dados_faturamento_map.get(cod, {})
 
         total_xml = xml_doc.get(
             "total_valor_servicos",
@@ -100,16 +157,31 @@ def painel_geral_sn(
 
         total_dom = fat_dom_doc.get("tooltip_dominio", 0.0)
 
+        try:
+            total_xml = float(total_xml or 0.0)
+        except Exception:
+            total_xml = 0.0
+
+        try:
+            total_dom = float(total_dom or 0.0)
+        except Exception:
+            total_dom = 0.0
+
         declarado = dec_doc.get("declarado")
 
         dif_dec = (
-            round(declarado - imposto_map.get(cod, 0.0), 2)
+            round(float(declarado) - float(imposto_map.get(cod, 0.0)), 2)
             if isinstance(declarado, (int, float))
             else "verificar"
         )
 
         erro_txt = None
-        mensagens = (dec_doc.get("retorno") or {}).get("serpro_body", {}).get("mensagens")
+
+        mensagens = (
+            (dec_doc.get("retorno") or {})
+            .get("serpro_body", {})
+            .get("mensagens")
+        )
 
         if mensagens and isinstance(mensagens, list) and len(mensagens) > 0:
             erro_txt = mensagens[0].get("texto")
@@ -137,7 +209,7 @@ def painel_geral_sn(
 
             "total": total_xml,
             "dominio": total_dom,
-            "diferenca": total_xml - total_dom,
+            "diferenca": round(total_xml - total_dom, 2),
 
             "cTribNac": xml_doc.get("cTribNac", []),
 
@@ -156,11 +228,11 @@ def painel_geral_sn(
 
             "cert_status": cert_status,
             "cert_validade": cert_validade,
-            
+
             "fator_r_percentual": mapa_fator_r.get(cod)
         })
 
-    return {"faturas": resultado}
+    return JSONResponse(content=limpar_para_json({"faturas": resultado}))
 
 
 @router.get("/painel-geral-rn")
@@ -171,16 +243,21 @@ def painel_geral_rn(
     data_sim = f"{mesano[:4]}-{mesano[4:]}-01"
 
     db = DatabaseConnection()
-    db.connect()
-    lista_apurados = db.get_todas_apuracoes_mensal(data_sim)
 
-    fat_service = FaturamentoService()
-    mapa_dominio = {
-        d["cod_cliente"]: d["total_faturamento"]
-        for d in fat_service.obter_faturamento_dominio(mesano)
-    }
+    try:
+        db.connect()
 
-    db.close()
+        lista_apurados = db.get_todas_apuracoes_mensal(data_sim)
+
+        fat_service = FaturamentoService()
+
+        mapa_dominio = {
+            d["cod_cliente"]: d["total_faturamento"]
+            for d in fat_service.obter_faturamento_dominio(mesano)
+        }
+
+    finally:
+        fechar_db_seguro(db)
 
     xml_map = {
         d["cod_cliente"]: d
@@ -193,6 +270,7 @@ def painel_geral_rn(
     }
 
     col_certs = get_certificados_collection()
+
     mapa_certs = {
         doc["_id"]: doc
         for doc in col_certs.find({})
@@ -230,8 +308,8 @@ def painel_geral_rn(
         val_total = xml_doc.get("total_valor_servicos", 0.0)
         val_dominio = mapa_dominio.get(cod, xml_doc.get("valor_dominio", 0.0))
 
-        total = Decimal(str(val_total))
-        dominio = Decimal(str(val_dominio))
+        total = Decimal(str(val_total or 0.0))
+        dominio = Decimal(str(val_dominio or 0.0))
         diferenca = total - dominio
 
         resultado.append({
@@ -255,4 +333,4 @@ def painel_geral_rn(
             "cert_validade": cert_validade,
         })
 
-    return {"faturas": resultado}
+    return JSONResponse(content=limpar_para_json({"faturas": resultado}))
